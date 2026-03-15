@@ -133,7 +133,7 @@ type AssignUserBenefitPlanInput struct {
 	AssignedBy *int64
 }
 
-func (s *SubscriptionService) ListBenefitPackages(ctx context.Context) ([]BenefitPackage, error) {
+func (s *SubscriptionService) ListBenefitPackages(ctx context.Context) (items []BenefitPackage, err error) {
 	if err := s.ensureBenefitPlanStorage(); err != nil {
 		return nil, err
 	}
@@ -147,12 +147,16 @@ func (s *SubscriptionService) ListBenefitPackages(ctx context.Context) ([]Benefi
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	items := make([]BenefitPackage, 0)
+	items = make([]BenefitPackage, 0)
 	for rows.Next() {
 		var item BenefitPackage
-		if err := rows.Scan(
+		if scanErr := rows.Scan(
 			&item.ID,
 			&item.Name,
 			&item.Description,
@@ -161,13 +165,13 @@ func (s *SubscriptionService) ListBenefitPackages(ctx context.Context) ([]Benefi
 			&item.LeaseDays,
 			&item.CreatedAt,
 			&item.UpdatedAt,
-		); err != nil {
-			return nil, err
+		); scanErr != nil {
+			return nil, scanErr
 		}
 		items = append(items, item)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, rowsErr
 	}
 	return items, nil
 }
@@ -611,7 +615,7 @@ func (s *SubscriptionService) GetUserBenefitPlanAssignment(ctx context.Context, 
 	return item, nil
 }
 
-func (s *SubscriptionService) ListBenefitPlanMembers(ctx context.Context, planID int64) ([]BenefitPlanMember, error) {
+func (s *SubscriptionService) ListBenefitPlanMembers(ctx context.Context, planID int64) (items []BenefitPlanMember, err error) {
 	if err := s.ensureBenefitPlanStorage(); err != nil {
 		return nil, err
 	}
@@ -631,12 +635,16 @@ func (s *SubscriptionService) ListBenefitPlanMembers(ctx context.Context, planID
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	items := make([]BenefitPlanMember, 0)
+	items = make([]BenefitPlanMember, 0)
 	for rows.Next() {
 		var item BenefitPlanMember
-		if err := rows.Scan(
+		if scanErr := rows.Scan(
 			&item.UserID,
 			&item.Email,
 			&item.Role,
@@ -644,13 +652,13 @@ func (s *SubscriptionService) ListBenefitPlanMembers(ctx context.Context, planID
 			&item.Version,
 			&item.AssignedAt,
 			&item.UpdatedAt,
-		); err != nil {
-			return nil, err
+		); scanErr != nil {
+			return nil, scanErr
 		}
 		items = append(items, item)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, rowsErr
 	}
 	return items, nil
 }
@@ -764,7 +772,10 @@ func (s *SubscriptionService) BulkAssignUsersToBenefitPlan(ctx context.Context, 
 	planID := input.PlanID
 
 	// Batch-fetch current assignments for all users to avoid N+1 queries.
-	currentAssignments := s.batchGetUserPlanAssignments(ctx, userIDs)
+	currentAssignments, err := s.batchGetUserPlanAssignments(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	result := &BenefitPlanUserBulkResult{
 		Errors:   make([]string, 0),
@@ -818,7 +829,10 @@ func (s *SubscriptionService) BulkRemoveUsersFromBenefitPlan(ctx context.Context
 	}
 
 	// Batch-fetch current assignments for all users to avoid N+1 queries.
-	currentAssignments := s.batchGetUserPlanAssignments(ctx, userIDs)
+	currentAssignments, err := s.batchGetUserPlanAssignments(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	result := &BenefitPlanUserBulkResult{
 		Errors:   make([]string, 0),
@@ -867,9 +881,9 @@ func (s *SubscriptionService) ensureBenefitPlanStorage() error {
 
 // batchGetUserPlanAssignments fetches current plan assignments for multiple users
 // in a single query, returning a map keyed by user_id.
-func (s *SubscriptionService) batchGetUserPlanAssignments(ctx context.Context, userIDs []int64) map[int64]UserBenefitPlanAssignment {
+func (s *SubscriptionService) batchGetUserPlanAssignments(ctx context.Context, userIDs []int64) (result map[int64]UserBenefitPlanAssignment, err error) {
 	if len(userIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 	client := s.sqlClientFromContext(ctx)
 	rows, err := client.QueryContext(ctx, `
@@ -879,14 +893,18 @@ func (s *SubscriptionService) batchGetUserPlanAssignments(ctx context.Context, u
 		WHERE a.user_id = ANY($1)
 	`, pq.Array(userIDs))
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	result := make(map[int64]UserBenefitPlanAssignment, len(userIDs))
+	result = make(map[int64]UserBenefitPlanAssignment, len(userIDs))
 	for rows.Next() {
 		var item UserBenefitPlanAssignment
-		if err := rows.Scan(
+		if scanErr := rows.Scan(
 			&item.UserID,
 			&item.PlanID,
 			&item.PlanName,
@@ -894,12 +912,15 @@ func (s *SubscriptionService) batchGetUserPlanAssignments(ctx context.Context, u
 			&item.AssignedBy,
 			&item.AssignedAt,
 			&item.UpdatedAt,
-		); err != nil {
-			return result
+		); scanErr != nil {
+			return nil, scanErr
 		}
 		result[item.UserID] = item
 	}
-	return result
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, rowsErr
+	}
+	return result, nil
 }
 
 func (s *SubscriptionService) sqlClientFromContext(ctx context.Context) *dbent.Client {
