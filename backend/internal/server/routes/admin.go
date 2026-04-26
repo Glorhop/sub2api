@@ -516,7 +516,7 @@ func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	// 用户下的订阅列表
 	admin.GET("/users/:id/subscriptions", h.Admin.Subscription.ListByUser)
 
-	// 用户权益方案归属（一对一）
+	// 用户权益方案归属（支持一对多；兼容旧接口）
 	admin.GET("/users/:id/benefit-plan", h.Admin.Subscription.GetUserBenefitPlan)
 	admin.PUT("/users/:id/benefit-plan", h.Admin.Subscription.AssignUserBenefitPlan)
 }
