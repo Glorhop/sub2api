@@ -605,6 +605,8 @@ func (s *SubscriptionService) GetUserBenefitPlanAssignment(ctx context.Context, 
 		FROM user_plan_assignments a
 		JOIN benefit_plans p ON p.id = a.plan_id
 		WHERE a.user_id = $1
+		ORDER BY a.assigned_at DESC, a.plan_id DESC
+		LIMIT 1
 	`, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -708,9 +710,8 @@ func (s *SubscriptionService) assignUserBenefitPlanCore(ctx context.Context, inp
 		if _, err := client.ExecContext(txCtx, `
 			INSERT INTO user_plan_assignments (user_id, plan_id, version, assigned_by, assigned_at, updated_at)
 			VALUES ($1, $2, 1, $3, NOW(), NOW())
-			ON CONFLICT (user_id)
+			ON CONFLICT (user_id, plan_id)
 			DO UPDATE SET
-				plan_id = EXCLUDED.plan_id,
 				version = user_plan_assignments.version + 1,
 				assigned_by = EXCLUDED.assigned_by,
 				assigned_at = NOW(),
@@ -733,8 +734,8 @@ func (s *SubscriptionService) assignUserBenefitPlanCore(ctx context.Context, inp
 			SELECT a.user_id, a.plan_id, p.name, a.version, a.assigned_by, a.assigned_at, a.updated_at
 			FROM user_plan_assignments a
 			JOIN benefit_plans p ON p.id = a.plan_id
-			WHERE a.user_id = $1
-		`, input.UserID)
+			WHERE a.user_id = $1 AND a.plan_id = $2
+		`, input.UserID, *input.PlanID)
 		if err != nil {
 			_ = tx.Rollback()
 			return nil, err
@@ -783,11 +784,13 @@ func (s *SubscriptionService) BulkAssignUsersToBenefitPlan(ctx context.Context, 
 	}
 
 	for _, userID := range userIDs {
-		if current, ok := currentAssignments[userID]; ok && current.PlanID == planID {
-			result.SuccessCount++
-			result.UnchangedCount++
-			result.Statuses[userID] = "unchanged"
-			continue
+		if plans, ok := currentAssignments[userID]; ok {
+			if _, assigned := plans[planID]; assigned {
+				result.SuccessCount++
+				result.UnchangedCount++
+				result.Statuses[userID] = "unchanged"
+				continue
+			}
 		}
 
 		// Plan existence already validated above; skip redundant per-user check.
@@ -840,24 +843,19 @@ func (s *SubscriptionService) BulkRemoveUsersFromBenefitPlan(ctx context.Context
 	}
 
 	for _, userID := range userIDs {
-		current, ok := currentAssignments[userID]
-		if !ok {
+		plans, ok := currentAssignments[userID]
+		if !ok || len(plans) == 0 {
 			result.SkippedCount++
 			result.Statuses[userID] = "not_assigned"
 			continue
 		}
-		if current.PlanID != input.PlanID {
+		if _, assigned := plans[input.PlanID]; !assigned {
 			result.SkippedCount++
 			result.Statuses[userID] = "assigned_elsewhere"
 			continue
 		}
 
-		// Plan existence already validated above; skip redundant per-user check.
-		if _, err := s.assignUserBenefitPlanCore(ctx, &AssignUserBenefitPlanInput{
-			UserID:     userID,
-			PlanID:     nil,
-			AssignedBy: input.AssignedBy,
-		}, true); err != nil {
+		if err := s.removeUserBenefitPlanCore(ctx, userID, input.PlanID); err != nil {
 			result.FailedCount++
 			result.Errors = append(result.Errors, fmt.Sprintf("user %d: %v", userID, err))
 			result.Statuses[userID] = "failed"
@@ -872,6 +870,44 @@ func (s *SubscriptionService) BulkRemoveUsersFromBenefitPlan(ctx context.Context
 	return result, nil
 }
 
+func (s *SubscriptionService) removeUserBenefitPlanCore(ctx context.Context, userID, planID int64) error {
+	if err := s.ensureBenefitPlanStorage(); err != nil {
+		return err
+	}
+
+	tx, err := s.entClient.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	txCtx := dbent.NewTxContext(ctx, tx)
+	client := tx.Client()
+
+	if err := lockUserForPlanAssignment(txCtx, client, userID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if _, err := client.ExecContext(txCtx, `DELETE FROM user_plan_assignments WHERE user_id = $1 AND plan_id = $2`, userID, planID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	changedGroups, err := s.reconcileUserPlanSubscriptionsTx(txCtx, client, userID, time.Now())
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	s.flushPlanSubscriptionInvalidations(map[int64]map[int64]struct{}{
+		userID: toInt64Set(changedGroups),
+	})
+	return nil
+}
+
 func (s *SubscriptionService) ensureBenefitPlanStorage() error {
 	if s == nil || s.entClient == nil {
 		return ErrBenefitPlanStorageUnavailable
@@ -879,9 +915,9 @@ func (s *SubscriptionService) ensureBenefitPlanStorage() error {
 	return nil
 }
 
-// batchGetUserPlanAssignments fetches current plan assignments for multiple users
-// in a single query, returning a map keyed by user_id.
-func (s *SubscriptionService) batchGetUserPlanAssignments(ctx context.Context, userIDs []int64) (result map[int64]UserBenefitPlanAssignment, err error) {
+// batchGetUserPlanAssignments fetches current plan memberships for multiple users
+// in a single query, returning a map[user_id]set(plan_id).
+func (s *SubscriptionService) batchGetUserPlanAssignments(ctx context.Context, userIDs []int64) (result map[int64]map[int64]struct{}, err error) {
 	if len(userIDs) == 0 {
 		return nil, nil
 	}
@@ -901,21 +937,32 @@ func (s *SubscriptionService) batchGetUserPlanAssignments(ctx context.Context, u
 		}
 	}()
 
-	result = make(map[int64]UserBenefitPlanAssignment, len(userIDs))
+	result = make(map[int64]map[int64]struct{}, len(userIDs))
 	for rows.Next() {
-		var item UserBenefitPlanAssignment
+		var (
+			userID     int64
+			planID     int64
+			planName   string
+			version    int64
+			assignedBy *int64
+			assignedAt time.Time
+			updatedAt  time.Time
+		)
 		if scanErr := rows.Scan(
-			&item.UserID,
-			&item.PlanID,
-			&item.PlanName,
-			&item.Version,
-			&item.AssignedBy,
-			&item.AssignedAt,
-			&item.UpdatedAt,
+			&userID,
+			&planID,
+			&planName,
+			&version,
+			&assignedBy,
+			&assignedAt,
+			&updatedAt,
 		); scanErr != nil {
 			return nil, scanErr
 		}
-		result[item.UserID] = item
+		if _, ok := result[userID]; !ok {
+			result[userID] = make(map[int64]struct{})
+		}
+		result[userID][planID] = struct{}{}
 	}
 	if rowsErr := rows.Err(); rowsErr != nil {
 		return nil, rowsErr
