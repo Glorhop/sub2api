@@ -1105,12 +1105,16 @@ func normalizePositiveInt64List(values []int64) []int64 {
 	return out
 }
 
-func queryOneBenefitPackage(ctx context.Context, client *dbent.Client, query string, args ...any) (*BenefitPackage, error) {
+func queryOneBenefitPackage(ctx context.Context, client *dbent.Client, query string, args ...any) (_ *BenefitPackage, err error) {
 	rows, err := client.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
 			return nil, err
@@ -1133,14 +1137,18 @@ func queryOneBenefitPackage(ctx context.Context, client *dbent.Client, query str
 	return &item, nil
 }
 
-func queryBenefitPlans(ctx context.Context, client *dbent.Client, query string, args ...any) ([]BenefitPlan, error) {
+func queryBenefitPlans(ctx context.Context, client *dbent.Client, query string, args ...any) (plans []BenefitPlan, err error) {
 	rows, err := client.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	plans := make([]BenefitPlan, 0)
+	plans = make([]BenefitPlan, 0)
 	for rows.Next() {
 		var plan BenefitPlan
 		if err := rows.Scan(
@@ -1171,7 +1179,7 @@ func queryOneBenefitPlan(ctx context.Context, client *dbent.Client, query string
 	return &plans[0], nil
 }
 
-func fillBenefitPlanPackages(ctx context.Context, client *dbent.Client, plans []BenefitPlan) error {
+func fillBenefitPlanPackages(ctx context.Context, client *dbent.Client, plans []BenefitPlan) (err error) {
 	if len(plans) == 0 {
 		return nil
 	}
@@ -1193,7 +1201,11 @@ func fillBenefitPlanPackages(ctx context.Context, client *dbent.Client, plans []
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	for rows.Next() {
 		var (
@@ -1218,7 +1230,7 @@ func fillBenefitPlanPackages(ctx context.Context, client *dbent.Client, plans []
 	return rows.Err()
 }
 
-func fillBenefitPlanAssignmentCounts(ctx context.Context, client *dbent.Client, plans []BenefitPlan) error {
+func fillBenefitPlanAssignmentCounts(ctx context.Context, client *dbent.Client, plans []BenefitPlan) (err error) {
 	if len(plans) == 0 {
 		return nil
 	}
@@ -1238,7 +1250,11 @@ func fillBenefitPlanAssignmentCounts(ctx context.Context, client *dbent.Client, 
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	for rows.Next() {
 		var (
@@ -1285,7 +1301,7 @@ func replaceBenefitPlanPackages(ctx context.Context, client *dbent.Client, planI
 	return nil
 }
 
-func queryDesiredPlanDaysByGroup(ctx context.Context, client *dbent.Client, userID int64) (map[int64]int, error) {
+func queryDesiredPlanDaysByGroup(ctx context.Context, client *dbent.Client, userID int64) (result map[int64]int, err error) {
 	rows, err := client.QueryContext(ctx, `
 		SELECT bp.group_id, SUM(bp.lease_days)::bigint AS desired_days
 		FROM user_plan_assignments a
@@ -1297,9 +1313,13 @@ func queryDesiredPlanDaysByGroup(ctx context.Context, client *dbent.Client, user
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	result := make(map[int64]int)
+	result = make(map[int64]int)
 	for rows.Next() {
 		var (
 			groupID    int64
@@ -1327,7 +1347,7 @@ type planReconcileSubscription struct {
 	PlanDaysApplied int
 }
 
-func queryPlanAffectedSubscriptionsForUpdate(ctx context.Context, client *dbent.Client, userID int64) (map[int64]planReconcileSubscription, error) {
+func queryPlanAffectedSubscriptionsForUpdate(ctx context.Context, client *dbent.Client, userID int64) (result map[int64]planReconcileSubscription, err error) {
 	rows, err := client.QueryContext(ctx, `
 		SELECT id, group_id, expires_at, status, plan_days_applied
 		FROM user_subscriptions
@@ -1338,9 +1358,13 @@ func queryPlanAffectedSubscriptionsForUpdate(ctx context.Context, client *dbent.
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	result := make(map[int64]planReconcileSubscription)
+	result = make(map[int64]planReconcileSubscription)
 	for rows.Next() {
 		var item planReconcileSubscription
 		if err := rows.Scan(&item.ID, &item.GroupID, &item.ExpiresAt, &item.Status, &item.PlanDaysApplied); err != nil {
@@ -1402,7 +1426,7 @@ func lockUserForPlanAssignment(ctx context.Context, client *dbent.Client, userID
 	return nil
 }
 
-func listAssignedUserIDsForPlan(ctx context.Context, client *dbent.Client, planID int64, forUpdate bool) ([]int64, error) {
+func listAssignedUserIDsForPlan(ctx context.Context, client *dbent.Client, planID int64, forUpdate bool) (userIDs []int64, err error) {
 	query := `
 		SELECT user_id
 		FROM user_plan_assignments
@@ -1417,9 +1441,13 @@ func listAssignedUserIDsForPlan(ctx context.Context, client *dbent.Client, planI
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	userIDs := make([]int64, 0)
+	userIDs = make([]int64, 0)
 	for rows.Next() {
 		var userID int64
 		if err := rows.Scan(&userID); err != nil {
@@ -1430,7 +1458,7 @@ func listAssignedUserIDsForPlan(ctx context.Context, client *dbent.Client, planI
 	return userIDs, rows.Err()
 }
 
-func listAssignedUserIDsForPackage(ctx context.Context, client *dbent.Client, packageID int64, forUpdate bool) ([]int64, error) {
+func listAssignedUserIDsForPackage(ctx context.Context, client *dbent.Client, packageID int64, forUpdate bool) (userIDs []int64, err error) {
 	query := `
 		SELECT a.user_id
 		FROM user_plan_assignments a
@@ -1446,9 +1474,13 @@ func listAssignedUserIDsForPackage(ctx context.Context, client *dbent.Client, pa
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	userIDs := make([]int64, 0)
+	userIDs = make([]int64, 0)
 	var lastUserID int64
 	hasLast := false
 	for rows.Next() {
@@ -1467,12 +1499,16 @@ func listAssignedUserIDsForPackage(ctx context.Context, client *dbent.Client, pa
 	return userIDs, rows.Err()
 }
 
-func queryOneUserBenefitPlanAssignment(ctx context.Context, client *dbent.Client, query string, args ...any) (*UserBenefitPlanAssignment, error) {
+func queryOneUserBenefitPlanAssignment(ctx context.Context, client *dbent.Client, query string, args ...any) (_ *UserBenefitPlanAssignment, err error) {
 	rows, err := client.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
 			return nil, err
@@ -1502,12 +1538,16 @@ func queryOneInt64(ctx context.Context, client *dbent.Client, query string, args
 	return value, nil
 }
 
-func queryOneValue(ctx context.Context, client *dbent.Client, dest any, query string, args ...any) error {
+func queryOneValue(ctx context.Context, client *dbent.Client, dest any, query string, args ...any) (err error) {
 	rows, err := client.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
 			return err
