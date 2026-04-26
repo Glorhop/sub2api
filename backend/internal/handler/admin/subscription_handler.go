@@ -638,7 +638,8 @@ func (h *SubscriptionHandler) BulkRemoveBenefitPlanUsers(c *gin.Context) {
 	response.Success(c, benefitPlanUserBulkResultResponseFromService(result))
 }
 
-// GetUserBenefitPlan handles getting current user benefit plan assignment
+// GetUserBenefitPlan handles getting one user benefit plan assignment for compatibility.
+// When multiple plans exist, returns the most recently assigned one.
 // GET /api/v1/admin/users/:id/benefit-plan
 func (h *SubscriptionHandler) GetUserBenefitPlan(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -658,7 +659,8 @@ func (h *SubscriptionHandler) GetUserBenefitPlan(c *gin.Context) {
 	response.Success(c, userBenefitPlanAssignmentResponseFromService(*assignment))
 }
 
-// AssignUserBenefitPlan handles assigning/clearing a user benefit plan
+// AssignUserBenefitPlan handles assigning/clearing user benefit plan assignments.
+// plan_id != nil appends/refreshes one plan, plan_id == nil clears all assignments.
 // PUT /api/v1/admin/users/:id/benefit-plan
 func (h *SubscriptionHandler) AssignUserBenefitPlan(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
