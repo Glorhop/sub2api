@@ -1102,6 +1102,24 @@
         </div>
       </div>
 
+      <!-- OpenAI API Key upstream API surface -->
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'apikey' && !openaiPassthroughEnabled"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.upstreamAPI') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.upstreamAPIDesc') }}
+            </p>
+          </div>
+          <div class="w-64">
+            <Select v-model="openAIUpstreamAPI" :options="openAIUpstreamAPIOptions" />
+          </div>
+        </div>
+      </div>
+
       <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'apikey')"
@@ -1907,7 +1925,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
-import type { Account, Proxy, AdminGroup, CheckMixedChannelResponse, OpenAICompactMode } from '@/types'
+import type { Account, Proxy, AdminGroup, CheckMixedChannelResponse, OpenAICompactMode, OpenAIUpstreamAPI } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -2052,6 +2070,7 @@ const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
 const openaiPassthroughEnabled = ref(false)
+const openAIUpstreamAPI = ref<OpenAIUpstreamAPI>('responses')
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
@@ -2110,6 +2129,10 @@ const openAICompactModeOptions = computed(() => [
   { value: 'auto', label: t('admin.accounts.openai.compactModeAuto') },
   { value: 'force_on', label: t('admin.accounts.openai.compactModeForceOn') },
   { value: 'force_off', label: t('admin.accounts.openai.compactModeForceOff') }
+])
+const openAIUpstreamAPIOptions = computed(() => [
+  { value: 'responses', label: t('admin.accounts.openai.upstreamAPIResponses') },
+  { value: 'chat_completions', label: t('admin.accounts.openai.upstreamAPIChatCompletions') }
 ])
 const isOpenAIModelRestrictionDisabled = computed(() =>
   props.account?.platform === 'openai' && openaiPassthroughEnabled.value
@@ -2256,6 +2279,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/API Key)
   openaiPassthroughEnabled.value = false
+  openAIUpstreamAPI.value = 'responses'
   openAICompactMode.value = 'auto'
   openAICompactModelMappings.value = []
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
@@ -2265,6 +2289,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
+    if (newAccount.type === 'apikey' && extra?.openai_upstream_api === 'chat_completions') {
+      openAIUpstreamAPI.value = 'chat_completions'
+    }
     openAICompactMode.value = (extra?.openai_compact_mode as OpenAICompactMode) || 'auto'
     openaiOAuthResponsesWebSocketV2Mode.value = resolveOpenAIWSModeFromExtra(extra, {
       modeKey: 'openai_oauth_responses_websockets_v2_mode',
@@ -3313,9 +3340,15 @@ const handleSubmit = async () => {
       delete newExtra.openai_ws_enabled
       if (openaiPassthroughEnabled.value) {
         newExtra.openai_passthrough = true
+        delete newExtra.openai_upstream_api
       } else {
         delete newExtra.openai_passthrough
         delete newExtra.openai_oauth_passthrough
+        if (props.account.type === 'apikey' && openAIUpstreamAPI.value === 'chat_completions') {
+          newExtra.openai_upstream_api = openAIUpstreamAPI.value
+        } else {
+          delete newExtra.openai_upstream_api
+        }
       }
       if (openAICompactMode.value === 'auto') {
         delete newExtra.openai_compact_mode
