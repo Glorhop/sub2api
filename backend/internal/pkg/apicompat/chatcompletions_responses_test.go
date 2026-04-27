@@ -8,6 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func mustJSONRaw(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return b
+}
+
 // ---------------------------------------------------------------------------
 // ChatCompletionsToResponses tests
 // ---------------------------------------------------------------------------
@@ -579,6 +586,95 @@ func TestResponsesToChatCompletions_WebSearch(t *testing.T) {
 	var content string
 	require.NoError(t, json.Unmarshal(chat.Choices[0].Message.Content, &content))
 	assert.Equal(t, "search results", content)
+}
+
+func TestResponsesRequestToChatCompletions_BasicTextAndTools(t *testing.T) {
+	input := []ResponsesInputItem{{
+		Role: "user",
+		Content: mustJSONRaw(t, []ResponsesContentPart{
+			{Type: "input_text", Text: "draw a cat"},
+			{Type: "input_image", ImageURL: "data:image/png;base64,abc"},
+		}),
+	}}
+	maxTokens := 256
+	temp := 0.3
+	req := &ResponsesRequest{
+		Model:           "glm-5.1",
+		Instructions:    "be concise",
+		Input:           mustJSONRaw(t, input),
+		MaxOutputTokens: &maxTokens,
+		Temperature:     &temp,
+		Stream:          true,
+		Reasoning:       &ResponsesReasoning{Effort: "xhigh"},
+		Tools: []ResponsesTool{
+			{Type: "function", Name: "lookup", Description: "lookup data", Parameters: json.RawMessage(`{"type":"object"}`)},
+			{Type: "web_search"},
+		},
+	}
+
+	chat, err := ResponsesRequestToChatCompletions(req)
+	require.NoError(t, err)
+	require.Equal(t, "glm-5.1", chat.Model)
+	require.True(t, chat.Stream)
+	require.NotNil(t, chat.StreamOptions)
+	require.True(t, chat.StreamOptions.IncludeUsage)
+	require.NotNil(t, chat.MaxTokens)
+	assert.Equal(t, 256, *chat.MaxTokens)
+	assert.Equal(t, "xhigh", chat.ReasoningEffort)
+	require.Len(t, chat.Messages, 2)
+	assert.Equal(t, "system", chat.Messages[0].Role)
+	assert.Equal(t, "user", chat.Messages[1].Role)
+	var parts []ChatContentPart
+	require.NoError(t, json.Unmarshal(chat.Messages[1].Content, &parts))
+	require.Len(t, parts, 2)
+	assert.Equal(t, "text", parts[0].Type)
+	assert.Equal(t, "image_url", parts[1].Type)
+	require.Len(t, chat.Tools, 1)
+	assert.Equal(t, "lookup", chat.Tools[0].Function.Name)
+}
+
+func TestChatCompletionsToResponsesResponse_TextToolAndUsage(t *testing.T) {
+	resp := &ChatCompletionsResponse{
+		ID:    "chatcmpl_1",
+		Model: "glm-5.1",
+		Choices: []ChatChoice{{
+			Index: 0,
+			Message: ChatMessage{
+				Role:    "assistant",
+				Content: mustJSONRaw(t, "ok"),
+				ToolCalls: []ChatToolCall{{
+					ID:   "call_1",
+					Type: "function",
+					Function: ChatFunctionCall{
+						Name:      "lookup",
+						Arguments: `{"q":"cat"}`,
+					},
+				}},
+			},
+			FinishReason: "tool_calls",
+		}},
+		Usage: &ChatUsage{
+			PromptTokens:     10,
+			CompletionTokens: 5,
+			TotalTokens:      15,
+			PromptTokensDetails: &ChatTokenDetails{
+				CachedTokens: 3,
+			},
+		},
+	}
+
+	out := ChatCompletionsToResponsesResponse(resp, "gpt-5.5")
+	require.Equal(t, "gpt-5.5", out.Model)
+	require.Equal(t, "completed", out.Status)
+	require.Len(t, out.Output, 2)
+	assert.Equal(t, "message", out.Output[0].Type)
+	assert.Equal(t, "ok", out.Output[0].Content[0].Text)
+	assert.Equal(t, "function_call", out.Output[1].Type)
+	assert.Equal(t, "lookup", out.Output[1].Name)
+	require.NotNil(t, out.Usage)
+	assert.Equal(t, 10, out.Usage.InputTokens)
+	require.NotNil(t, out.Usage.InputTokensDetails)
+	assert.Equal(t, 3, out.Usage.InputTokensDetails.CachedTokens)
 }
 
 // ---------------------------------------------------------------------------
