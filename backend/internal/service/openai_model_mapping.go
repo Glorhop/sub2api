@@ -20,6 +20,22 @@ func resolveOpenAIForwardModel(account *Account, requestedModel, defaultMappedMo
 	return mappedModel
 }
 
+func resolveOpenAIForwardUpstreamModel(account *Account, billingModel string) string {
+	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if account == nil || !account.IsOpenAIApiKey() {
+		return upstreamModel
+	}
+
+	mappedModel, matched := account.ResolveMappedModel(billingModel)
+	if !matched {
+		return upstreamModel
+	}
+	if trimmed := strings.TrimSpace(mappedModel); trimmed != "" {
+		return trimmed
+	}
+	return upstreamModel
+}
+
 // resolveOpenAICompactForwardModel determines the compact-only upstream model
 // for /responses/compact requests. It never affects normal /responses traffic.
 // When no compact-specific mapping matches, the input model is returned as-is.
