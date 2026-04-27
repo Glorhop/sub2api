@@ -2032,6 +2032,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	clientTransport := GetOpenAIClientTransport(c)
 	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
 	wsDecision = resolveOpenAIWSDecisionByClientTransport(wsDecision, clientTransport)
+	chatCompletionsUpstream := account.IsOpenAIChatCompletionsUpstreamEnabled()
+	if chatCompletionsUpstream {
+		wsDecision = OpenAIWSProtocolDecision{
+			Transport: OpenAIUpstreamTransportHTTPSSE,
+			Reason:    "chat_completions_upstream",
+		}
+	}
 	if c != nil {
 		c.Set("openai_ws_transport_decision", string(wsDecision.Transport))
 		c.Set("openai_ws_transport_reason", wsDecision.Reason)
@@ -2314,7 +2321,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			case PlatformOpenAI:
 				// For OpenAI API Key, remove max_output_tokens (not supported)
 				// For OpenAI OAuth (Responses API), keep it (supported)
-				if account.Type == AccountTypeAPIKey {
+				if account.Type == AccountTypeAPIKey && !chatCompletionsUpstream {
 					delete(reqBody, "max_output_tokens")
 					bodyModified = true
 					markPatchDelete("max_output_tokens")
@@ -2477,6 +2484,27 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
 		return nil, err
+	}
+
+	// Capture upstream request body for ops retry of this attempt.
+	setOpsUpstreamRequestBody(c, body)
+
+	if chatCompletionsUpstream {
+		reasoningEffort := extractOpenAIReasoningEffort(reqBody, originalModel)
+		serviceTier := extractOpenAIServiceTier(reqBody)
+		return s.forwardOpenAIChatCompletionsUpstream(
+			ctx,
+			c,
+			account,
+			body,
+			token,
+			reqStream,
+			originalModel,
+			upstreamModel,
+			startTime,
+			reasoningEffort,
+			serviceTier,
+		)
 	}
 
 	// 命中 WS 时仅走 WebSocket Mode；不再自动回退 HTTP。
@@ -5108,8 +5136,12 @@ func (s *OpenAIGatewayService) replaceModelInSSEBody(body, fromModel, toModel st
 }
 
 func (s *OpenAIGatewayService) validateUpstreamBaseURL(raw string) (string, error) {
-	if s.cfg != nil && !s.cfg.Security.URLAllowlist.Enabled {
-		normalized, err := urlvalidator.ValidateURLFormat(raw, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
+	if s.cfg == nil || !s.cfg.Security.URLAllowlist.Enabled {
+		allowInsecureHTTP := false
+		if s.cfg != nil {
+			allowInsecureHTTP = s.cfg.Security.URLAllowlist.AllowInsecureHTTP
+		}
+		normalized, err := urlvalidator.ValidateURLFormat(raw, allowInsecureHTTP)
 		if err != nil {
 			return "", fmt.Errorf("invalid base_url: %w", err)
 		}
