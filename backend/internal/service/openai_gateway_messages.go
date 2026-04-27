@@ -62,7 +62,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// 3. Model mapping
 	billingModel := resolveOpenAIForwardModel(account, normalizedModel, defaultMappedModel)
-	upstreamModel := resolveOpenAIForwardUpstreamModel(account, billingModel)
+	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
 	responsesReq.Model = upstreamModel
 
 	logger.L().Debug("openai messages: model mapping applied",
@@ -147,22 +147,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
 		return nil, fmt.Errorf("get access token: %w", err)
-	}
-
-	if account.IsOpenAIChatCompletionsUpstreamEnabled() {
-		return s.forwardOpenAIChatCompletionsUpstreamAsAnthropic(
-			ctx,
-			c,
-			account,
-			responsesBody,
-			token,
-			clientStream,
-			originalModel,
-			billingModel,
-			upstreamModel,
-			startTime,
-			promptCacheKey,
-		)
 	}
 
 	// 6. Build upstream request

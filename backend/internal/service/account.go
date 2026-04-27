@@ -990,45 +990,6 @@ func (a *Account) GetOpenAIBaseURL() string {
 	return "https://api.openai.com"
 }
 
-const (
-	OpenAIUpstreamAPIResponses       = "responses"
-	OpenAIUpstreamAPIChatCompletions = "chat_completions"
-)
-
-// GetOpenAIUpstreamAPI returns the upstream API surface used by OpenAI API Key
-// accounts. The default remains Responses API for compatibility.
-func (a *Account) GetOpenAIUpstreamAPI() string {
-	if a == nil || !a.IsOpenAI() {
-		return OpenAIUpstreamAPIResponses
-	}
-	if a.Extra == nil {
-		return OpenAIUpstreamAPIResponses
-	}
-	if v, ok := a.Extra["openai_upstream_api"].(string); ok {
-		return normalizeOpenAIUpstreamAPI(v)
-	}
-	return OpenAIUpstreamAPIResponses
-}
-
-// IsOpenAIChatCompletionsUpstreamEnabled returns whether an OpenAI API Key
-// account should forward Responses-format inbound requests to an
-// OpenAI-compatible /v1/chat/completions upstream.
-func (a *Account) IsOpenAIChatCompletionsUpstreamEnabled() bool {
-	return a != nil &&
-		a.IsOpenAIApiKey() &&
-		a.GetOpenAIUpstreamAPI() == OpenAIUpstreamAPIChatCompletions &&
-		!a.IsOpenAIPassthroughEnabled()
-}
-
-func normalizeOpenAIUpstreamAPI(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case OpenAIUpstreamAPIChatCompletions, "chat-completions", "chat", "openai_compatible", "openai-compatible", "compatible":
-		return OpenAIUpstreamAPIChatCompletions
-	default:
-		return OpenAIUpstreamAPIResponses
-	}
-}
-
 func (a *Account) GetOpenAIAccessToken() string {
 	if !a.IsOpenAI() {
 		return ""

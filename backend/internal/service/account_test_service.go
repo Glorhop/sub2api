@@ -453,7 +453,6 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	var apiURL string
 	var isOAuth bool
 	var chatgptAccountID string
-	useChatCompletionsUpstream := account.IsOpenAIChatCompletionsUpstreamEnabled()
 
 	if account.IsOAuth() {
 		isOAuth = true
@@ -481,11 +480,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		if useChatCompletionsUpstream {
-			apiURL = buildOpenAIChatCompletionsURL(normalizedBaseURL)
-		} else {
-			apiURL = buildOpenAIResponsesURL(normalizedBaseURL)
-		}
+		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/responses"
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -497,12 +492,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
-	var payload map[string]any
-	if useChatCompletionsUpstream {
-		payload = createOpenAIChatCompletionsTestPayload(testModelID)
-	} else {
-		payload = createOpenAITestPayload(testModelID, isOAuth)
-	}
+	// Create OpenAI Responses API payload
+	payload := createOpenAITestPayload(testModelID, isOAuth)
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event
@@ -556,10 +547,6 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
-	}
-
-	if useChatCompletionsUpstream {
-		return s.processOpenAIChatCompletionsStream(c, resp.Body)
 	}
 
 	// Process SSE stream
@@ -1101,24 +1088,6 @@ func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 	return payload
 }
 
-func createOpenAIChatCompletionsTestPayload(modelID string) map[string]any {
-	return map[string]any{
-		"model": modelID,
-		"messages": []map[string]any{
-			{
-				"role":    "system",
-				"content": openai.DefaultInstructions,
-			},
-			{
-				"role":    "user",
-				"content": "hi",
-			},
-		},
-		"stream":     true,
-		"max_tokens": 256,
-	}
-}
-
 // processClaudeStream processes the SSE stream from Claude API
 func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader) error {
 	reader := bufio.NewReader(body)
@@ -1169,84 +1138,6 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 				}
 			}
 			return s.sendErrorAndEnd(c, errorMsg)
-		}
-	}
-}
-
-// processOpenAIChatCompletionsStream processes the SSE stream from an
-// OpenAI-compatible Chat Completions API.
-func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader) error {
-	reader := bufio.NewReader(body)
-	seenChunk := false
-	seenFinished := false
-
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				if seenFinished || seenChunk {
-					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-					return nil
-				}
-				return s.sendErrorAndEnd(c, "Stream ended before chat completion completed")
-			}
-			return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
-		}
-
-		line = strings.TrimSpace(line)
-		if line == "" || !sseDataPrefix.MatchString(line) {
-			continue
-		}
-
-		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
-		if jsonStr == "[DONE]" {
-			if seenFinished || seenChunk {
-				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-				return nil
-			}
-			return s.sendErrorAndEnd(c, "Stream ended before chat completion completed")
-		}
-
-		var data map[string]any
-		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-			continue
-		}
-
-		if errData, ok := data["error"].(map[string]any); ok {
-			errorMsg := "Unknown error"
-			if msg, ok := errData["message"].(string); ok && msg != "" {
-				errorMsg = msg
-			}
-			return s.sendErrorAndEnd(c, errorMsg)
-		}
-
-		choices, _ := data["choices"].([]any)
-		for _, rawChoice := range choices {
-			choice, _ := rawChoice.(map[string]any)
-			if choice == nil {
-				continue
-			}
-
-			if delta, _ := choice["delta"].(map[string]any); delta != nil {
-				seenChunk = true
-				if text, ok := delta["content"].(string); ok && text != "" {
-					s.sendEvent(c, TestEvent{Type: "content", Text: text})
-				}
-				if text, ok := delta["reasoning_content"].(string); ok && text != "" {
-					s.sendEvent(c, TestEvent{Type: "content", Text: text})
-				}
-			}
-
-			if message, _ := choice["message"].(map[string]any); message != nil {
-				seenChunk = true
-				if text, ok := message["content"].(string); ok && text != "" {
-					s.sendEvent(c, TestEvent{Type: "content", Text: text})
-				}
-			}
-
-			if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
-				seenFinished = true
-			}
 		}
 	}
 }

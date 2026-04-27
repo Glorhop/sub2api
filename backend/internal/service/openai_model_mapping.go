@@ -20,22 +20,6 @@ func resolveOpenAIForwardModel(account *Account, requestedModel, defaultMappedMo
 	return mappedModel
 }
 
-func resolveOpenAIForwardUpstreamModel(account *Account, billingModel string) string {
-	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
-	if account == nil || !account.IsOpenAIApiKey() {
-		return upstreamModel
-	}
-
-	mappedModel, matched := account.ResolveMappedModel(billingModel)
-	if !matched {
-		return upstreamModel
-	}
-	if trimmed := strings.TrimSpace(mappedModel); trimmed != "" {
-		return trimmed
-	}
-	return upstreamModel
-}
-
 func isExplicitCodexModel(model string) bool {
 	model = strings.TrimSpace(model)
 	if model == "" {

@@ -1995,13 +1995,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	clientTransport := GetOpenAIClientTransport(c)
 	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
 	wsDecision = resolveOpenAIWSDecisionByClientTransport(wsDecision, clientTransport)
-	chatCompletionsUpstream := account.IsOpenAIChatCompletionsUpstreamEnabled()
-	if chatCompletionsUpstream {
-		wsDecision = OpenAIWSProtocolDecision{
-			Transport: OpenAIUpstreamTransportHTTPSSE,
-			Reason:    "chat_completions_upstream",
-		}
-	}
 	if c != nil {
 		c.Set("openai_ws_transport_decision", string(wsDecision.Transport))
 		c.Set("openai_ws_transport_reason", wsDecision.Reason)
@@ -2255,7 +2248,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			case PlatformOpenAI:
 				// For OpenAI API Key, remove max_output_tokens (not supported)
 				// For OpenAI OAuth (Responses API), keep it (supported)
-				if account.Type == AccountTypeAPIKey && !chatCompletionsUpstream {
+				if account.Type == AccountTypeAPIKey {
 					delete(reqBody, "max_output_tokens")
 					bodyModified = true
 					markPatchDelete("max_output_tokens")
@@ -2348,24 +2341,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	// Capture upstream request body for ops retry of this attempt.
 	setOpsUpstreamRequestBody(c, body)
-
-	if chatCompletionsUpstream {
-		reasoningEffort := extractOpenAIReasoningEffort(reqBody, originalModel)
-		serviceTier := extractOpenAIServiceTier(reqBody)
-		return s.forwardOpenAIChatCompletionsUpstream(
-			ctx,
-			c,
-			account,
-			body,
-			token,
-			reqStream,
-			originalModel,
-			upstreamModel,
-			startTime,
-			reasoningEffort,
-			serviceTier,
-		)
-	}
 
 	// 命中 WS 时仅走 WebSocket Mode；不再自动回退 HTTP。
 	if wsDecision.Transport == OpenAIUpstreamTransportResponsesWebsocketV2 {
@@ -4730,12 +4705,8 @@ func (s *OpenAIGatewayService) replaceModelInSSEBody(body, fromModel, toModel st
 }
 
 func (s *OpenAIGatewayService) validateUpstreamBaseURL(raw string) (string, error) {
-	if s.cfg == nil || !s.cfg.Security.URLAllowlist.Enabled {
-		allowInsecureHTTP := false
-		if s.cfg != nil {
-			allowInsecureHTTP = s.cfg.Security.URLAllowlist.AllowInsecureHTTP
-		}
-		normalized, err := urlvalidator.ValidateURLFormat(raw, allowInsecureHTTP)
+	if s.cfg != nil && !s.cfg.Security.URLAllowlist.Enabled {
+		normalized, err := urlvalidator.ValidateURLFormat(raw, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
 		if err != nil {
 			return "", fmt.Errorf("invalid base_url: %w", err)
 		}
@@ -4765,21 +4736,6 @@ func buildOpenAIResponsesURL(base string) string {
 		return normalized + "/responses"
 	}
 	return normalized + "/v1/responses"
-}
-
-// buildOpenAIChatCompletionsURL 组装 OpenAI-compatible Chat Completions 端点。
-// - base 以 /v1 结尾：追加 /chat/completions
-// - base 已是 /chat/completions：原样返回
-// - 其他情况：追加 /v1/chat/completions
-func buildOpenAIChatCompletionsURL(base string) string {
-	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
-	if strings.HasSuffix(normalized, "/chat/completions") {
-		return normalized
-	}
-	if strings.HasSuffix(normalized, "/v1") {
-		return normalized + "/chat/completions"
-	}
-	return normalized + "/v1/chat/completions"
 }
 
 func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {
