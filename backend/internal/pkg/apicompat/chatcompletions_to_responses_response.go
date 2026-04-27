@@ -219,7 +219,7 @@ func ChatChunkToResponsesEvents(chunk *ChatCompletionsChunk, state *ChatEventToR
 			state.FinishReason = *choice.FinishReason
 		}
 		if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
-			state.Reasoning.WriteString(*choice.Delta.ReasoningContent)
+			_, _ = state.Reasoning.WriteString(*choice.Delta.ReasoningContent)
 		}
 		if choice.Delta.Content != nil {
 			events = append(events, chatResponsesTextDeltaEvents(state, *choice.Delta.Content)...)
@@ -331,7 +331,7 @@ func chatResponsesTextDeltaEvents(state *ChatEventToResponsesState, delta string
 			},
 		}))
 	}
-	state.Text.WriteString(delta)
+	_, _ = state.Text.WriteString(delta)
 	events = append(events, chatResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
 		OutputIndex:  state.MessageOutputIndex,
 		ContentIndex: 0,
@@ -377,7 +377,7 @@ func chatResponsesToolCallEvents(state *ChatEventToResponsesState, tc ChatToolCa
 		tool.Name = tc.Function.Name
 	}
 	if tc.Function.Arguments != "" {
-		tool.Arguments.WriteString(tc.Function.Arguments)
+		_, _ = tool.Arguments.WriteString(tc.Function.Arguments)
 		events = append(events, chatResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
 			OutputIndex: tool.OutputIndex,
 			CallID:      tool.CallID,
