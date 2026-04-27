@@ -130,6 +130,23 @@ func TestResolveOpenAIForwardModel_PreventsClaudeModelFromFallingBackToGpt54(t *
 	}
 }
 
+func TestResolveOpenAIForwardUpstreamModel_AppliesAPIKeySecondStageMapping(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"gpt-5.4": "kimi-k2.6",
+			},
+		},
+	}
+
+	got := resolveOpenAIForwardUpstreamModel(account, "gpt-5.4")
+	if got != "kimi-k2.6" {
+		t.Fatalf("resolveOpenAIForwardUpstreamModel(...) = %q, want %q", got, "kimi-k2.6")
+	}
+}
+
 func TestResolveOpenAICompactForwardModel(t *testing.T) {
 	tests := []struct {
 		name          string
