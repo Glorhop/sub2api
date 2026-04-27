@@ -3530,6 +3530,11 @@ export default {
         responsesStatusAutoUnknown: 'Auto probe: unknown',
         responsesStatusForcedResponses: 'Forced Responses',
         responsesStatusForcedChatCompletions: 'Forced Chat Completions',
+        upstreamAPI: 'Upstream API endpoint',
+        upstreamAPIDesc:
+          'Only applies to OpenAI API Key accounts. Use Chat Completions for OpenAI-compatible providers such as OpenCode Go GLM/Kimi/DeepSeek/MiMo/Qwen models.',
+        upstreamAPIResponses: 'Responses API (/v1/responses)',
+        upstreamAPIChatCompletions: 'Chat Completions compatible (/v1/chat/completions)',
         codexCLIOnly: 'Codex official clients only',
         codexCLIOnlyDesc:
           'Only applies to OpenAI OAuth. When enabled, only Codex official client families are allowed; when disabled, the gateway bypasses this restriction and keeps existing behavior.',

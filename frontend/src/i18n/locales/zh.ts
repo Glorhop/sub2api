@@ -3686,6 +3686,11 @@ export default {
         responsesStatusAutoUnknown: '自动探测：未探测',
         responsesStatusForcedResponses: '已强制 Responses',
         responsesStatusForcedChatCompletions: '已强制 Chat Completions',
+        upstreamAPI: '上游 API 端点',
+        upstreamAPIDesc:
+          '仅对 OpenAI API Key 账号生效。OpenCode Go 的 GLM/Kimi/DeepSeek/MiMo/Qwen 等 OpenAI-compatible 模型请选择 Chat Completions。',
+        upstreamAPIResponses: 'Responses API（/v1/responses）',
+        upstreamAPIChatCompletions: 'Chat Completions 兼容（/v1/chat/completions）',
         codexCLIOnly: '仅允许 Codex 官方客户端',
         codexCLIOnlyDesc: '仅对 OpenAI OAuth 生效。开启后仅允许 Codex 官方客户端家族访问；关闭后完全绕过并保持原逻辑。',
         codexCLIOnlyAllowClaudeCode: '额外放行 Claude Code 的 Codex 插件',

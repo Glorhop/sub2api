@@ -1355,6 +1355,24 @@
         </div>
       </div>
 
+      <!-- OpenAI API Key upstream API surface -->
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'apikey' && !openaiPassthroughEnabled"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.upstreamAPI') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.upstreamAPIDesc') }}
+            </p>
+          </div>
+          <div class="w-64">
+            <Select v-model="openAIUpstreamAPI" :options="openAIUpstreamAPIOptions" />
+          </div>
+        </div>
+      </div>
+
       <!-- OpenAI Codex 图片生成桥接账号级覆盖 -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'apikey')"
@@ -2387,7 +2405,8 @@ import type {
   CheckMixedChannelResponse,
   OpenAICompactMode,
   OpenAIResponsesMode,
-  OpenAIEndpointCapability
+  OpenAIEndpointCapability,
+  OpenAIUpstreamAPI
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -2578,6 +2597,7 @@ const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
 const openaiPassthroughEnabled = ref(false)
+const openAIUpstreamAPI = ref<OpenAIUpstreamAPI>('responses')
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
@@ -2773,6 +2793,10 @@ const normalizeOpenAIResponsesMode = (mode: unknown): OpenAIResponsesMode => {
   }
   return 'auto'
 }
+const openAIUpstreamAPIOptions = computed(() => [
+  { value: 'responses', label: t('admin.accounts.openai.upstreamAPIResponses') },
+  { value: 'chat_completions', label: t('admin.accounts.openai.upstreamAPIChatCompletions') }
+])
 const isOpenAIModelRestrictionDisabled = computed(() =>
   props.account?.platform === 'openai' && openaiPassthroughEnabled.value
 )
@@ -2954,6 +2978,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/API Key)
   openaiPassthroughEnabled.value = false
+  openAIUpstreamAPI.value = 'responses'
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -2967,6 +2992,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
+    if (newAccount.type === 'apikey' && extra?.openai_upstream_api === 'chat_completions') {
+      openAIUpstreamAPI.value = 'chat_completions'
+    }
     openAICompactMode.value = (extra?.openai_compact_mode as OpenAICompactMode) || 'auto'
     if (newAccount.type === 'apikey') {
       openAIResponsesMode.value = normalizeOpenAIResponsesMode(extra?.openai_responses_mode)
@@ -4088,9 +4116,15 @@ const handleSubmit = async () => {
       delete newExtra.openai_ws_enabled
       if (openaiPassthroughEnabled.value) {
         newExtra.openai_passthrough = true
+        delete newExtra.openai_upstream_api
       } else {
         delete newExtra.openai_passthrough
         delete newExtra.openai_oauth_passthrough
+        if (props.account.type === 'apikey' && openAIUpstreamAPI.value === 'chat_completions') {
+          newExtra.openai_upstream_api = openAIUpstreamAPI.value
+        } else {
+          delete newExtra.openai_upstream_api
+        }
       }
       if (openAICompactMode.value === 'auto') {
         delete newExtra.openai_compact_mode

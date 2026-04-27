@@ -2536,6 +2536,24 @@
         </div>
       </div>
 
+      <!-- OpenAI API Key upstream API surface -->
+      <div
+        v-if="form.platform === 'openai' && accountCategory === 'apikey' && !openaiPassthroughEnabled"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.upstreamAPI') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.upstreamAPIDesc') }}
+            </p>
+          </div>
+          <div class="w-64">
+            <Select v-model="openAIUpstreamAPI" :options="openAIUpstreamAPIOptions" />
+          </div>
+        </div>
+      </div>
+
       <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
@@ -3227,7 +3245,8 @@ import type {
   CodexSessionImportMessage,
   OpenAICompactMode,
   OpenAIResponsesMode,
-  OpenAIEndpointCapability
+  OpenAIEndpointCapability,
+  OpenAIUpstreamAPI
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -3414,6 +3433,7 @@ const customErrorCodeInput = ref<number | null>(null)
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
+const openAIUpstreamAPI = ref<OpenAIUpstreamAPI>('responses')
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
@@ -3532,6 +3552,10 @@ const applyOpenAIEndpointCapabilities = (credentials: Record<string, unknown>) =
   }
   credentials.openai_capabilities = capabilities
 }
+const openAIUpstreamAPIOptions = computed(() => [
+  { value: 'responses', label: t('admin.accounts.openai.upstreamAPIResponses') },
+  { value: 'chat_completions', label: t('admin.accounts.openai.upstreamAPIChatCompletions') }
+])
 
 function buildAntigravityExtra(): Record<string, unknown> | undefined {
   const extra: Record<string, unknown> = {}
@@ -3842,6 +3866,7 @@ watch(
     if (newPlatform !== 'openai') {
       openaiPassthroughEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
+      openAIUpstreamAPI.value = 'responses'
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       codexCLIOnlyEnabled.value = false
@@ -4316,9 +4341,15 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   delete extra.openai_ws_enabled
   if (openaiPassthroughEnabled.value) {
     extra.openai_passthrough = true
+    delete extra.openai_upstream_api
   } else {
     delete extra.openai_passthrough
     delete extra.openai_oauth_passthrough
+    if (accountCategory.value === 'apikey' && openAIUpstreamAPI.value === 'chat_completions') {
+      extra.openai_upstream_api = openAIUpstreamAPI.value
+    } else {
+      delete extra.openai_upstream_api
+    }
   }
 
   if (accountCategory.value === 'oauth-based' && codexCLIOnlyEnabled.value) {
