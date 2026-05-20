@@ -416,6 +416,10 @@ func (r *userRepository) deleteUser(ctx context.Context, exec *dbent.Client, id 
 		}
 	}
 
+	if _, err := exec.ExecContext(ctx, "DELETE FROM user_plan_assignments WHERE user_id = $1", id); err != nil {
+		return translatePersistenceError(err, service.ErrUserNotFound, nil)
+	}
+
 	affected, err := exec.User.Delete().Where(dbuser.IDEQ(id)).Exec(ctx)
 	if err != nil {
 		return translatePersistenceError(err, service.ErrUserNotFound, nil)

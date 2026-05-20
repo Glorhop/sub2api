@@ -10,6 +10,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
+	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/suite"
@@ -30,8 +31,13 @@ func (s *UserRepoSuite) SetupTest() {
 	// 清理测试数据，确保每个测试从干净状态开始
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM auth_identity_channels")
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM auth_identities")
+	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM user_plan_assignments")
+	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM benefit_plan_packages")
+	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM benefit_packages")
+	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM benefit_plans")
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM user_subscriptions")
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM user_allowed_groups")
+	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM groups")
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM users")
 }
 
@@ -67,9 +73,24 @@ func (s *UserRepoSuite) mustCreateGroup(name string) *service.Group {
 
 	g, err := s.client.Group.Create().
 		SetName(name).
+		SetPlatform(service.PlatformAnthropic).
 		SetStatus(service.StatusActive).
+		SetSubscriptionType(service.SubscriptionTypeStandard).
 		Save(s.ctx)
 	s.Require().NoError(err, "create group")
+	return groupEntityToService(g)
+}
+
+func (s *UserRepoSuite) mustCreateSubscriptionGroup(name string) *service.Group {
+	s.T().Helper()
+
+	g, err := s.client.Group.Create().
+		SetName(name).
+		SetPlatform(service.PlatformAnthropic).
+		SetStatus(service.StatusActive).
+		SetSubscriptionType(service.SubscriptionTypeSubscription).
+		Save(s.ctx)
+	s.Require().NoError(err, "create subscription group")
 	return groupEntityToService(g)
 }
 
@@ -225,6 +246,95 @@ func (s *UserRepoSuite) TestDeleteRemovesAuthIdentitiesAndChannels() {
 	channelCount, err := s.client.AuthIdentityChannel.Query().Where(authidentitychannel.IdentityIDEQ(identity.ID)).Count(s.ctx)
 	s.Require().NoError(err)
 	s.Require().Zero(channelCount)
+}
+
+func (s *UserRepoSuite) TestDeleteRemovesBenefitPlanAssignments() {
+	user := s.mustCreateUser(&service.User{Email: "delete-benefit-plan@test.com"})
+
+	_, err := integrationDB.ExecContext(s.ctx, `
+		INSERT INTO benefit_plans (id, name, description, created_at, updated_at)
+		VALUES (900001, 'delete-user-plan', '', NOW(), NOW())
+		ON CONFLICT (id) DO NOTHING
+	`)
+	s.Require().NoError(err)
+	_, err = integrationDB.ExecContext(s.ctx, `
+		INSERT INTO user_plan_assignments (user_id, plan_id, version, assigned_at, updated_at)
+		VALUES ($1, 900001, 1, NOW(), NOW())
+	`, user.ID)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.repo.Delete(s.ctx, user.ID))
+
+	var count int
+	err = integrationDB.QueryRowContext(s.ctx, `
+		SELECT COUNT(*) FROM user_plan_assignments WHERE user_id = $1
+	`, user.ID).Scan(&count)
+	s.Require().NoError(err)
+	s.Require().Zero(count)
+
+	_, err = s.client.User.Query().Where(dbuser.IDEQ(user.ID)).Only(s.ctx)
+	s.Require().Error(err)
+}
+
+func (s *UserRepoSuite) TestBenefitPlanReconcileSkipsSoftDeletedMembers() {
+	activeUser := s.mustCreateUser(&service.User{Email: "active-benefit-member@test.com"})
+	deletedUser := s.mustCreateUser(&service.User{Email: "deleted-benefit-member@test.com"})
+	group := s.mustCreateSubscriptionGroup("benefit-reconcile-group")
+
+	_, err := integrationDB.ExecContext(s.ctx, `
+		INSERT INTO benefit_packages (id, name, description, group_id, lease_days, created_at, updated_at)
+		VALUES (910001, 'benefit-package-visible-only', '', $1, 1000, NOW(), NOW())
+	`, group.ID)
+	s.Require().NoError(err)
+	_, err = integrationDB.ExecContext(s.ctx, `
+		INSERT INTO benefit_plans (id, name, description, created_at, updated_at)
+		VALUES (910001, 'benefit-plan-visible-only', '', NOW(), NOW())
+	`)
+	s.Require().NoError(err)
+	_, err = integrationDB.ExecContext(s.ctx, `
+		INSERT INTO benefit_plan_packages (plan_id, package_id, sort_order, created_at)
+		VALUES (910001, 910001, 0, NOW())
+	`)
+	s.Require().NoError(err)
+	_, err = integrationDB.ExecContext(s.ctx, `
+		INSERT INTO user_plan_assignments (user_id, plan_id, version, assigned_at, updated_at)
+		VALUES ($1, 910001, 1, NOW(), NOW()), ($2, 910001, 1, NOW(), NOW())
+	`, activeUser.ID, deletedUser.ID)
+	s.Require().NoError(err)
+
+	_, err = s.client.User.Delete().Where(dbuser.IDEQ(deletedUser.ID)).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	subSvc := service.NewSubscriptionService(
+		newGroupRepositoryWithSQL(s.client, integrationDB),
+		NewUserSubscriptionRepository(s.client),
+		nil,
+		s.client,
+		nil,
+	)
+	plans, err := subSvc.ListBenefitPlans(s.ctx)
+	s.Require().NoError(err)
+	s.Require().Len(plans, 1)
+	s.Require().Equal(int64(1), plans[0].AssignedUserCount)
+
+	_, err = subSvc.UpdateBenefitPackage(s.ctx, 910001, &service.UpdateBenefitPackageInput{
+		Name:      "benefit-package-visible-only",
+		GroupID:   group.ID,
+		LeaseDays: 1001,
+	})
+	s.Require().NoError(err)
+
+	var activeSubs, deletedSubs int
+	err = integrationDB.QueryRowContext(s.ctx, `
+		SELECT COUNT(*) FROM user_subscriptions WHERE user_id = $1 AND deleted_at IS NULL
+	`, activeUser.ID).Scan(&activeSubs)
+	s.Require().NoError(err)
+	err = integrationDB.QueryRowContext(s.ctx, `
+		SELECT COUNT(*) FROM user_subscriptions WHERE user_id = $1 AND deleted_at IS NULL
+	`, deletedUser.ID).Scan(&deletedSubs)
+	s.Require().NoError(err)
+	s.Require().Equal(1, activeSubs)
+	s.Require().Zero(deletedSubs)
 }
 
 // --- List / ListWithFilters ---
