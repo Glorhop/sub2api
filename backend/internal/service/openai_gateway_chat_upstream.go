@@ -44,7 +44,7 @@ func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsUpstream(
 	}
 	responsesReq.Stream = reqStream
 
-	chatReq, err := apicompat.ResponsesRequestToChatCompletions(&responsesReq)
+	chatReq, err := apicompat.ResponsesToChatCompletionsRequest(&responsesReq)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
@@ -55,6 +55,7 @@ func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsUpstream(
 		return nil, err
 	}
 	chatReq.Stream = reqStream
+	normalizeOpenAIChatCompletionsUpstreamRequest(chatReq)
 	if reqStream {
 		chatReq.StreamOptions = &apicompat.ChatStreamOptions{IncludeUsage: true}
 	}
@@ -182,12 +183,13 @@ func (s *OpenAIGatewayService) forwardOpenAIChatCompletionsUpstreamAsAnthropic(
 	}
 	responsesReq.Stream = clientStream
 
-	chatReq, err := apicompat.ResponsesRequestToChatCompletions(&responsesReq)
+	chatReq, err := apicompat.ResponsesToChatCompletionsRequest(&responsesReq)
 	if err != nil {
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "Unable to convert request to Chat Completions")
 		return nil, err
 	}
 	chatReq.Stream = clientStream
+	normalizeOpenAIChatCompletionsUpstreamRequest(chatReq)
 	if clientStream {
 		chatReq.StreamOptions = &apicompat.ChatStreamOptions{IncludeUsage: true}
 	}
@@ -321,6 +323,15 @@ func (s *OpenAIGatewayService) buildOpenAIChatCompletionsUpstreamRequest(
 	return req, nil
 }
 
+func normalizeOpenAIChatCompletionsUpstreamRequest(req *apicompat.ChatCompletionsRequest) {
+	if req == nil || req.MaxTokens != nil || req.MaxCompletionTokens == nil {
+		return
+	}
+	v := *req.MaxCompletionTokens
+	req.MaxTokens = &v
+	req.MaxCompletionTokens = nil
+}
+
 func (s *OpenAIGatewayService) handleChatCompletionsUpstreamNonStreamingResponse(
 	resp *http.Response,
 	c *gin.Context,
@@ -338,7 +349,7 @@ func (s *OpenAIGatewayService) handleChatCompletionsUpstreamNonStreamingResponse
 	if err := json.Unmarshal(body, &chatResp); err != nil {
 		return nil, fmt.Errorf("parse chat completions response: %w", err)
 	}
-	responsesResp := apicompat.ChatCompletionsToResponsesResponse(&chatResp, originalModel)
+	responsesResp := apicompat.ChatCompletionsResponseToResponses(&chatResp, originalModel)
 	out, err := json.Marshal(responsesResp)
 	if err != nil {
 		return nil, fmt.Errorf("serialize responses response: %w", err)
@@ -372,7 +383,7 @@ func (s *OpenAIGatewayService) handleChatCompletionsUpstreamAnthropicNonStreamin
 		writeAnthropicError(c, http.StatusBadGateway, "api_error", "Unable to parse Chat Completions upstream response")
 		return nil, fmt.Errorf("parse chat completions response: %w", err)
 	}
-	responsesResp := apicompat.ChatCompletionsToResponsesResponse(&chatResp, upstreamModel)
+	responsesResp := apicompat.ChatCompletionsResponseToResponses(&chatResp, upstreamModel)
 	anthropicResp := apicompat.ResponsesToAnthropic(responsesResp, originalModel)
 	out, err := json.Marshal(anthropicResp)
 	if err != nil {
@@ -427,8 +438,7 @@ func (s *OpenAIGatewayService) handleChatCompletionsUpstreamAnthropicStreamingRe
 		return nil, errors.New("streaming not supported")
 	}
 
-	chatState := apicompat.NewChatEventToResponsesState()
-	chatState.Model = upstreamModel
+	chatState := apicompat.NewChatCompletionsToResponsesStreamState(upstreamModel)
 	anthropicState := apicompat.NewResponsesEventToAnthropicState()
 	anthropicState.Model = originalModel
 
@@ -489,7 +499,7 @@ func (s *OpenAIGatewayService) handleChatCompletionsUpstreamAnthropicStreamingRe
 	}
 
 	finalize := func() (*OpenAIForwardResult, error) {
-		events := apicompat.FinalizeChatResponsesStream(chatState)
+		events := apicompat.FinalizeChatCompletionsResponsesStream(chatState)
 		if chatState.Usage != nil {
 			usage = openAIUsageFromResponsesUsage(chatState.Usage)
 		}
@@ -530,7 +540,7 @@ func (s *OpenAIGatewayService) handleChatCompletionsUpstreamAnthropicStreamingRe
 			)
 			continue
 		}
-		events := apicompat.ChatChunkToResponsesEvents(&chunk, chatState)
+		events := apicompat.ChatCompletionsChunkToResponsesEvents(&chunk, chatState)
 		if chatState.Usage != nil {
 			usage = openAIUsageFromResponsesUsage(chatState.Usage)
 		}
@@ -576,8 +586,7 @@ func (s *OpenAIGatewayService) handleChatCompletionsUpstreamStreamingResponse(
 		return nil, errors.New("streaming not supported")
 	}
 
-	state := apicompat.NewChatEventToResponsesState()
-	state.Model = originalModel
+	state := apicompat.NewChatCompletionsToResponsesStreamState(originalModel)
 	usage := &OpenAIUsage{}
 	var firstTokenMs *int
 	seenClientOutput := false
@@ -606,7 +615,7 @@ func (s *OpenAIGatewayService) handleChatCompletionsUpstreamStreamingResponse(
 	}
 
 	finalize := func() (*openaiStreamingResult, error) {
-		events := apicompat.FinalizeChatResponsesStream(state)
+		events := apicompat.FinalizeChatCompletionsResponsesStream(state)
 		if state.Usage != nil {
 			usage = openAIUsageFromResponsesUsage(state.Usage)
 		}
@@ -641,7 +650,7 @@ func (s *OpenAIGatewayService) handleChatCompletionsUpstreamStreamingResponse(
 			logger.L().Warn("chat completions upstream: failed to parse stream chunk", zap.Error(err))
 			continue
 		}
-		events := apicompat.ChatChunkToResponsesEvents(&chunk, state)
+		events := apicompat.ChatCompletionsChunkToResponsesEvents(&chunk, state)
 		if state.Usage != nil {
 			usage = openAIUsageFromResponsesUsage(state.Usage)
 		}

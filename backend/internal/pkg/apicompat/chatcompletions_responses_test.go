@@ -948,7 +948,7 @@ func TestResponsesToChatCompletions_WebSearch(t *testing.T) {
 	assert.Equal(t, "search results", content)
 }
 
-func TestResponsesRequestToChatCompletions_BasicTextAndTools(t *testing.T) {
+func TestResponsesToChatCompletionsRequest_BasicTextAndTools(t *testing.T) {
 	input := []ResponsesInputItem{{
 		Role: "user",
 		Content: mustJSONRaw(t, []ResponsesContentPart{
@@ -972,14 +972,13 @@ func TestResponsesRequestToChatCompletions_BasicTextAndTools(t *testing.T) {
 		},
 	}
 
-	chat, err := ResponsesRequestToChatCompletions(req)
+	chat, err := ResponsesToChatCompletionsRequest(req)
 	require.NoError(t, err)
 	require.Equal(t, "glm-5.1", chat.Model)
 	require.True(t, chat.Stream)
-	require.NotNil(t, chat.StreamOptions)
-	require.True(t, chat.StreamOptions.IncludeUsage)
-	require.NotNil(t, chat.MaxTokens)
-	assert.Equal(t, 256, *chat.MaxTokens)
+	require.Nil(t, chat.StreamOptions)
+	require.NotNil(t, chat.MaxCompletionTokens)
+	assert.Equal(t, 256, *chat.MaxCompletionTokens)
 	assert.Equal(t, "xhigh", chat.ReasoningEffort)
 	require.Len(t, chat.Messages, 2)
 	assert.Equal(t, "system", chat.Messages[0].Role)
@@ -993,7 +992,7 @@ func TestResponsesRequestToChatCompletions_BasicTextAndTools(t *testing.T) {
 	assert.Equal(t, "lookup", chat.Tools[0].Function.Name)
 }
 
-func TestChatCompletionsToResponsesResponse_TextToolAndUsage(t *testing.T) {
+func TestChatCompletionsResponseToResponses_TextToolAndUsage(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID:    "chatcmpl_1",
 		Model: "glm-5.1",
@@ -1023,7 +1022,7 @@ func TestChatCompletionsToResponsesResponse_TextToolAndUsage(t *testing.T) {
 		},
 	}
 
-	out := ChatCompletionsToResponsesResponse(resp, "gpt-5.5")
+	out := ChatCompletionsResponseToResponses(resp, "gpt-5.5")
 	require.Equal(t, "gpt-5.5", out.Model)
 	require.Equal(t, "completed", out.Status)
 	require.Len(t, out.Output, 2)
