@@ -31,7 +31,7 @@ func ChatCompletionsToResponsesResponse(resp *ChatCompletionsResponse, model str
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
 		status, incompleteDetails = chatFinishReasonToResponsesStatus(choice.FinishReason)
-		output = chatMessageToResponsesOutput(choice.Message)
+		output = chatCompletionMessageToResponsesOutput(choice.Message)
 	}
 	if output == nil {
 		output = []ResponsesOutput{}
@@ -59,7 +59,7 @@ func chatFinishReasonToResponsesStatus(finishReason string) (string, *ResponsesI
 	}
 }
 
-func chatMessageToResponsesOutput(msg ChatMessage) []ResponsesOutput {
+func chatCompletionMessageToResponsesOutput(msg ChatMessage) []ResponsesOutput {
 	var output []ResponsesOutput
 	if strings.TrimSpace(msg.ReasoningContent) != "" {
 		output = append(output, ResponsesOutput{
