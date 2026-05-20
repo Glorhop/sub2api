@@ -13,7 +13,7 @@ func ResponsesRequestToChatCompletions(req *ResponsesRequest) (*ChatCompletionsR
 		return nil, fmt.Errorf("nil responses request")
 	}
 
-	messages, err := responsesInputToChatMessages(req.Input)
+	messages, err := responsesRequestInputToChatMessages(req.Input)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func ResponsesRequestToChatCompletions(req *ResponsesRequest) (*ChatCompletionsR
 		out.MaxTokens = &v
 	}
 	if len(req.Tools) > 0 {
-		out.Tools = responsesToolsToChatTools(req.Tools)
+		out.Tools = responsesRequestToolsToChatTools(req.Tools)
 	}
 
 	return out, nil
@@ -57,7 +57,7 @@ func responsesReasoningEffortForChat(reasoning *ResponsesReasoning) string {
 	return effort
 }
 
-func responsesToolsToChatTools(tools []ResponsesTool) []ChatTool {
+func responsesRequestToolsToChatTools(tools []ResponsesTool) []ChatTool {
 	out := make([]ChatTool, 0, len(tools))
 	for _, tool := range tools {
 		if tool.Type != "function" || strings.TrimSpace(tool.Name) == "" {
@@ -76,7 +76,7 @@ func responsesToolsToChatTools(tools []ResponsesTool) []ChatTool {
 	return out
 }
 
-func responsesInputToChatMessages(raw json.RawMessage) ([]ChatMessage, error) {
+func responsesRequestInputToChatMessages(raw json.RawMessage) ([]ChatMessage, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -150,14 +150,14 @@ func responsesInputItemToChatMessages(item ResponsesInputItem) ([]ChatMessage, e
 		role = "user"
 	}
 
-	content, err := responsesContentToChatContent(item.Content, role)
+	content, err := responsesRequestContentToChatContent(item.Content, role)
 	if err != nil {
 		return nil, err
 	}
 	return []ChatMessage{{Role: role, Content: content, ToolCallID: item.CallID}}, nil
 }
 
-func responsesContentToChatContent(raw json.RawMessage, role string) (json.RawMessage, error) {
+func responsesRequestContentToChatContent(raw json.RawMessage, role string) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		if role == "assistant" {
 			return nil, nil
