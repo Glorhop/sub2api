@@ -9,6 +9,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/suite"
@@ -275,6 +276,42 @@ func (s *UserSubscriptionRepoSuite) TestList_NoFilters() {
 	s.Require().NoError(err, "List")
 	s.Require().Len(subs, 1)
 	s.Require().Equal(int64(1), page.Total)
+}
+
+func (s *UserSubscriptionRepoSuite) TestList_ExcludesSoftDeletedSubscriptions() {
+	user := s.mustCreateUser("list-softdeleted@test.com", service.RoleUser)
+	g1 := s.mustCreateGroup("g-list-softdeleted-1")
+	g2 := s.mustCreateGroup("g-list-softdeleted-2")
+
+	deleted := s.mustCreateSubscription(user.ID, g1.ID, nil)
+	visible := s.mustCreateSubscription(user.ID, g2.ID, nil)
+	s.Require().NoError(s.repo.Delete(s.ctx, deleted.ID))
+
+	subs, page, err := s.repo.List(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, nil, nil, "", "", "", "")
+	s.Require().NoError(err)
+	s.Require().Len(subs, 1)
+	s.Require().Equal(int64(1), page.Total)
+	s.Require().Equal(visible.ID, subs[0].ID)
+}
+
+func (s *UserSubscriptionRepoSuite) TestList_ExcludesSubscriptionsForSoftDeletedUsers() {
+	activeUser := s.mustCreateUser("list-active-user@test.com", service.RoleUser)
+	deletedUser := s.mustCreateUser("list-deleted-user@test.com", service.RoleUser)
+	g1 := s.mustCreateGroup("g-list-active-user")
+	g2 := s.mustCreateGroup("g-list-deleted-user")
+
+	visible := s.mustCreateSubscription(activeUser.ID, g1.ID, nil)
+	s.mustCreateSubscription(deletedUser.ID, g2.ID, nil)
+	_, err := s.client.User.Delete().Where(dbuser.IDEQ(deletedUser.ID)).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	subs, page, err := s.repo.List(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, nil, nil, "", "", "", "")
+	s.Require().NoError(err)
+	s.Require().Len(subs, 1)
+	s.Require().Equal(int64(1), page.Total)
+	s.Require().Equal(visible.ID, subs[0].ID)
+	s.Require().NotNil(subs[0].User)
+	s.Require().Equal(activeUser.ID, subs[0].User.ID)
 }
 
 func (s *UserSubscriptionRepoSuite) TestList_FilterByUserID() {

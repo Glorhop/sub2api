@@ -926,6 +926,7 @@ func (s *SubscriptionService) batchGetUserPlanAssignments(ctx context.Context, u
 		SELECT a.user_id, a.plan_id, p.name, a.version, a.assigned_by, a.assigned_at, a.updated_at
 		FROM user_plan_assignments a
 		JOIN benefit_plans p ON p.id = a.plan_id
+		JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
 		WHERE a.user_id = ANY($1)
 	`, pq.Array(userIDs))
 	if err != nil {
@@ -1289,10 +1290,11 @@ func fillBenefitPlanAssignmentCounts(ctx context.Context, client *dbent.Client, 
 	}
 
 	rows, err := client.QueryContext(ctx, `
-		SELECT plan_id, COUNT(*)::bigint
-		FROM user_plan_assignments
-		WHERE plan_id = ANY($1)
-		GROUP BY plan_id
+		SELECT a.plan_id, COUNT(*)::bigint
+		FROM user_plan_assignments a
+		JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
+		WHERE a.plan_id = ANY($1)
+		GROUP BY a.plan_id
 	`, pq.Array(planIDs))
 	if err != nil {
 		return err
@@ -1352,6 +1354,7 @@ func queryDesiredPlanDaysByGroup(ctx context.Context, client *dbent.Client, user
 	rows, err := client.QueryContext(ctx, `
 		SELECT bp.group_id, SUM(bp.lease_days)::bigint AS desired_days
 		FROM user_plan_assignments a
+		JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
 		JOIN benefit_plan_packages bpp ON bpp.plan_id = a.plan_id
 		JOIN benefit_packages bp ON bp.id = bpp.package_id
 		WHERE a.user_id = $1
@@ -1475,13 +1478,14 @@ func lockUserForPlanAssignment(ctx context.Context, client *dbent.Client, userID
 
 func listAssignedUserIDsForPlan(ctx context.Context, client *dbent.Client, planID int64, forUpdate bool) (userIDs []int64, err error) {
 	query := `
-		SELECT user_id
-		FROM user_plan_assignments
-		WHERE plan_id = $1
-		ORDER BY user_id ASC
+		SELECT a.user_id
+		FROM user_plan_assignments a
+		JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
+		WHERE a.plan_id = $1
+		ORDER BY a.user_id ASC
 	`
 	if forUpdate {
-		query += " FOR UPDATE"
+		query += " FOR UPDATE OF a"
 	}
 
 	rows, err := client.QueryContext(ctx, query, planID)
@@ -1510,6 +1514,7 @@ func listAssignedUserIDsForPackage(ctx context.Context, client *dbent.Client, pa
 		SELECT a.user_id
 		FROM user_plan_assignments a
 		JOIN benefit_plan_packages bpp ON bpp.plan_id = a.plan_id
+		JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
 		WHERE bpp.package_id = $1
 		ORDER BY a.user_id ASC
 	`

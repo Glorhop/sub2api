@@ -384,6 +384,10 @@ func (r *userRepository) Delete(ctx context.Context, id int64) error {
 		}
 	}
 
+	if _, err := txClient.ExecContext(ctx, "DELETE FROM user_plan_assignments WHERE user_id = $1", id); err != nil {
+		return translatePersistenceError(err, service.ErrUserNotFound, nil)
+	}
+
 	affected, err := txClient.User.Delete().Where(dbuser.IDEQ(id)).Exec(ctx)
 	if err != nil {
 		return translatePersistenceError(err, service.ErrUserNotFound, nil)

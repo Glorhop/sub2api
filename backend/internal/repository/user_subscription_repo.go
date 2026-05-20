@@ -6,6 +6,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -61,7 +62,12 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 func (r *userSubscriptionRepository) GetByID(ctx context.Context, id int64) (*service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
 	m, err := client.UserSubscription.Query().
-		Where(usersubscription.IDEQ(id)).
+		Where(
+			usersubscription.IDEQ(id),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
+		).
 		WithUser().
 		WithGroup().
 		WithAssignedByUser().
@@ -75,7 +81,13 @@ func (r *userSubscriptionRepository) GetByID(ctx context.Context, id int64) (*se
 func (r *userSubscriptionRepository) GetByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
 	m, err := client.UserSubscription.Query().
-		Where(usersubscription.UserIDEQ(userID), usersubscription.GroupIDEQ(groupID)).
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.GroupIDEQ(groupID),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
+		).
 		WithGroup().
 		Only(ctx)
 	if err != nil {
@@ -92,6 +104,9 @@ func (r *userSubscriptionRepository) GetActiveByUserIDAndGroupID(ctx context.Con
 			usersubscription.GroupIDEQ(groupID),
 			usersubscription.StatusEQ(service.SubscriptionStatusActive),
 			usersubscription.ExpiresAtGT(time.Now()),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
 		).
 		WithGroup().
 		Only(ctx)
@@ -141,7 +156,12 @@ func (r *userSubscriptionRepository) Delete(ctx context.Context, id int64) error
 func (r *userSubscriptionRepository) ListByUserID(ctx context.Context, userID int64) ([]service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
 	subs, err := client.UserSubscription.Query().
-		Where(usersubscription.UserIDEQ(userID)).
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
+		).
 		WithGroup().
 		Order(dbent.Desc(usersubscription.FieldCreatedAt)).
 		All(ctx)
@@ -158,6 +178,9 @@ func (r *userSubscriptionRepository) ListActiveByUserID(ctx context.Context, use
 			usersubscription.UserIDEQ(userID),
 			usersubscription.StatusEQ(service.SubscriptionStatusActive),
 			usersubscription.ExpiresAtGT(time.Now()),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
 		).
 		WithGroup().
 		Order(dbent.Desc(usersubscription.FieldCreatedAt)).
@@ -170,7 +193,12 @@ func (r *userSubscriptionRepository) ListActiveByUserID(ctx context.Context, use
 
 func (r *userSubscriptionRepository) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]service.UserSubscription, *pagination.PaginationResult, error) {
 	client := clientFromContext(ctx, r.client)
-	q := client.UserSubscription.Query().Where(usersubscription.GroupIDEQ(groupID))
+	q := client.UserSubscription.Query().Where(
+		usersubscription.GroupIDEQ(groupID),
+		usersubscription.DeletedAtIsNil(),
+		usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+		usersubscription.HasGroupWith(group.DeletedAtIsNil()),
+	)
 
 	total, err := q.Clone().Count(ctx)
 	if err != nil {
@@ -193,7 +221,12 @@ func (r *userSubscriptionRepository) ListByGroupID(ctx context.Context, groupID 
 
 func (r *userSubscriptionRepository) List(ctx context.Context, params pagination.PaginationParams, userID, groupID *int64, status, platform, sortBy, sortOrder string) ([]service.UserSubscription, *pagination.PaginationResult, error) {
 	client := clientFromContext(ctx, r.client)
-	q := client.UserSubscription.Query()
+	q := client.UserSubscription.Query().
+		Where(
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
+		)
 	if userID != nil {
 		q = q.Where(usersubscription.UserIDEQ(*userID))
 	}
@@ -201,7 +234,10 @@ func (r *userSubscriptionRepository) List(ctx context.Context, params pagination
 		q = q.Where(usersubscription.GroupIDEQ(*groupID))
 	}
 	if platform != "" {
-		q = q.Where(usersubscription.HasGroupWith(group.PlatformEQ(platform)))
+		q = q.Where(usersubscription.HasGroupWith(
+			group.PlatformEQ(platform),
+			group.DeletedAtIsNil(),
+		))
 	}
 
 	// Status filtering with real-time expiration check
@@ -271,7 +307,13 @@ func (r *userSubscriptionRepository) List(ctx context.Context, params pagination
 func (r *userSubscriptionRepository) ExistsByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (bool, error) {
 	client := clientFromContext(ctx, r.client)
 	return client.UserSubscription.Query().
-		Where(usersubscription.UserIDEQ(userID), usersubscription.GroupIDEQ(groupID)).
+		Where(
+			usersubscription.UserIDEQ(userID),
+			usersubscription.GroupIDEQ(groupID),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
+		).
 		Exist(ctx)
 }
 
@@ -379,6 +421,9 @@ func (r *userSubscriptionRepository) BatchUpdateExpiredStatus(ctx context.Contex
 		Where(
 			usersubscription.StatusEQ(service.SubscriptionStatusActive),
 			usersubscription.ExpiresAtLTE(time.Now()),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
 		).
 		SetStatus(service.SubscriptionStatusExpired).
 		Save(ctx)
@@ -393,6 +438,9 @@ func (r *userSubscriptionRepository) ListExpired(ctx context.Context) ([]service
 		Where(
 			usersubscription.StatusEQ(service.SubscriptionStatusActive),
 			usersubscription.ExpiresAtLTE(time.Now()),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
 		).
 		All(ctx)
 	if err != nil {
@@ -403,7 +451,14 @@ func (r *userSubscriptionRepository) ListExpired(ctx context.Context) ([]service
 
 func (r *userSubscriptionRepository) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
-	count, err := client.UserSubscription.Query().Where(usersubscription.GroupIDEQ(groupID)).Count(ctx)
+	count, err := client.UserSubscription.Query().
+		Where(
+			usersubscription.GroupIDEQ(groupID),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
+		).
+		Count(ctx)
 	return int64(count), err
 }
 
@@ -414,6 +469,9 @@ func (r *userSubscriptionRepository) CountActiveByGroupID(ctx context.Context, g
 			usersubscription.GroupIDEQ(groupID),
 			usersubscription.StatusEQ(service.SubscriptionStatusActive),
 			usersubscription.ExpiresAtGT(time.Now()),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
 		).
 		Count(ctx)
 	return int64(count), err
@@ -421,7 +479,14 @@ func (r *userSubscriptionRepository) CountActiveByGroupID(ctx context.Context, g
 
 func (r *userSubscriptionRepository) DeleteByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
-	n, err := client.UserSubscription.Delete().Where(usersubscription.GroupIDEQ(groupID)).Exec(ctx)
+	n, err := client.UserSubscription.Delete().
+		Where(
+			usersubscription.GroupIDEQ(groupID),
+			usersubscription.DeletedAtIsNil(),
+			usersubscription.HasUserWith(dbuser.DeletedAtIsNil()),
+			usersubscription.HasGroupWith(group.DeletedAtIsNil()),
+		).
+		Exec(ctx)
 	return int64(n), err
 }
 
